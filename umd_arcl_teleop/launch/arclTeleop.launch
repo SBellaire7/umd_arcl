@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+
+<launch>
+  <node name="joy_node" pkg="joy" type="joy_node"/>
+  <param name="joy_node/autorepeat_rate" value="5" type="double" />
+
+  <node name="driver_node" pkg="umd_arcl_driver" type="arclDriver"/>
+  <param name="arcl/ip" value="192.168.1.61" type="string"/>
+  <param name="arcl/port" value="7171" type="int"/>
+  <param name="arcl/pw" value="omron" type="string"/>
+
+  <node name="teleop_node" pkg="umd_arcl_teleop" type="arclTeleop"/>
+</launch>
