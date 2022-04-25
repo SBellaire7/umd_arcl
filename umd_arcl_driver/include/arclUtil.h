@@ -22,7 +22,8 @@ typedef struct Point2DArr
 
 int arclLogin(const char* ipAddr, int port, const char* pw);
 int arclQuit(int sock);
-float* arclParseStatus(const char* status);
+float* arclParseStatus(char* status);
+int* arclParseOdometer(char* odometer);
 void arclParseLidar(char* lidar, Point2DArr* pArr);
 
 #endif

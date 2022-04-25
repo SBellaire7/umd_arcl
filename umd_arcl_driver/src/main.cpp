@@ -2,12 +2,12 @@
 #include <string>
 #include <sys/time.h>
 
-#include <std_msgs/Bool.h>
+#include <std_msgs/Empty.h>
 #include <std_msgs/String.h>
-#include <std_msgs/Int32.h>
-#include <std_msgs/Int32MultiArray.h>
 #include <std_msgs/Float32.h>
 #include <umd_arcl_driver/Pose2DStamped.h>
+#include <umd_arcl_driver/Odometer.h>
+#include <umd_arcl_driver/Command2.h>
 #include <geometry_msgs/Point32.h>
 #include <sensor_msgs/PointCloud.h>
 #include <geometry_msgs/Twist.h>
@@ -22,13 +22,15 @@ class ArclDriver
     ros::Subscriber moveSub;
     ros::Subscriber rotateSub;
     ros::Subscriber rotateToSub;
-    ros::Subscriber gsSub;
+    ros::Subscriber stopSub;
     ros::Subscriber saySub;
     ros::Subscriber cmdVelSub;
+    ros::Subscriber odomResetSub;
 
     //publisher handles
     ros::Publisher socPub;
     ros::Publisher posePub;
+    ros::Publisher odomPub;
     ros::Publisher lidarPub;
     ros::Publisher lidarLowPub;
 
@@ -78,51 +80,50 @@ class ArclDriver
       moveSub = nh->subscribe("arcl/move", 1, &ArclDriver::moveCB, this);
       rotateSub = nh->subscribe("arcl/rotate", 1, &ArclDriver::rotateCB, this);
       rotateToSub = nh->subscribe("arcl/rotateTo", 1, &ArclDriver:: rotateToCB, this);
-      gsSub = nh->subscribe("arcl/goStop", 1, &ArclDriver::goStopCB, this);
+      stopSub = nh->subscribe("arcl/stop", 1, &ArclDriver::stopCB, this);
       saySub = nh->subscribe("arcl/say", 1, &ArclDriver::sayCB, this);
       cmdVelSub = nh->subscribe("arcl/cmd_vel", 1, &ArclDriver::cmdVelCB, this);
+      odomResetSub = nh->subscribe("arcl/odomReset", 1, &ArclDriver::odomResetCB, this);
 
       //setup publishers
       socPub = nh->advertise<std_msgs::Float32>("arcl/battery", 1);
       posePub = nh->advertise<umd_arcl_driver::Pose2DStamped>("arcl/pose", 1);
+      odomPub = nh->advertise<umd_arcl_driver::Odometer>("arcl/odom", 1);
       lidarPub = nh->advertise<sensor_msgs::PointCloud>("arcl/lidar", 1);
       lidarLowPub = nh->advertise<sensor_msgs::PointCloud>("arcl/lidarLow", 1);
     }
 
-    void moveCB(const std_msgs::Int32MultiArray& msg)
+    void moveCB(const umd_arcl_driver::Command2& msg)
     {
       std::string cmd = "dotask move ";
-      cmd = cmd + std::to_string(msg.data[0]) + " "
-                + std::to_string(msg.data[1]) + "\n";
+      cmd = cmd + std::to_string(msg.target) + " "
+                + std::to_string(msg.speed) + "\n";
       int nb = socketSend(sfd, cmd.c_str());
       if(nb < 0) ROS_WARN_STREAM("Move task was unsuccessful\n");
     }
 
-    void rotateCB(const std_msgs::Int32MultiArray& msg)
+    void rotateCB(const umd_arcl_driver::Command2& msg)
     {
       std::string cmd = "dotask deltaheading ";
-      cmd = cmd + std::to_string(msg.data[0]) + " "
-                + std::to_string(msg.data[1]) + "\n";
+      cmd = cmd + std::to_string(msg.target) + " "
+                + std::to_string(msg.speed) + "\n";
       int nb = socketSend(sfd, cmd.c_str());
       if(nb < 0) ROS_WARN_STREAM("Rotate task was unsuccessful\n");
     }
 
-    void rotateToCB(const std_msgs::Int32MultiArray& msg)
+    void rotateToCB(const umd_arcl_driver::Command2& msg)
     {
       std::string cmd = "dotask setheading ";
-      cmd = cmd + std::to_string(msg.data[0]) + " "
-                + std::to_string(msg.data[1]) + "\n";
+      cmd = cmd + std::to_string(msg.target) + " "
+                + std::to_string(msg.speed) + "\n";
       int nb = socketSend(sfd, cmd.c_str());
       if(nb < 0) ROS_WARN_STREAM("Rotate-to task was unsuccessful\n");
     }
 
-    void goStopCB(const std_msgs::Bool& msg)
+    void stopCB(const std_msgs::Empty& msg)
     {
-      std::string cmd;
-      if(msg.data) cmd = "go\n";
-      else cmd = "stop\n";
-      int nb = socketSend(sfd, cmd.c_str());
-      if(nb < 0) ROS_WARN_STREAM("Go/Stop task was unsuccessful\n");
+      int nb = socketSend(sfd, "stop\n");
+      if(nb < 0) ROS_WARN_STREAM("Stop task was unsuccessful\n");
     }
 
     void sayCB(const std_msgs::String& msg)
@@ -133,14 +134,20 @@ class ArclDriver
       if(nb < 0) ROS_WARN_STREAM("Say command was unsuccessful\n");
     }
 
+    void odomResetCB(const std_msgs::Empty& msg)
+    {
+      int nb = socketSend(sfd, "odometerReset\n");
+      if(nb < 0) ROS_WARN_STREAM("Odometer reset task was unsuccessful\n");
+    }
+
     void cmdVelCB(const geometry_msgs::Twist& msg)
     {
       //keep previous vals to smooth movement by not refreshing command if new val is similar
       static int prevLin = 0;
       static int prevAng = 0;
 
-      int lin = msg.linear.x;
-      int ang = msg.angular.z;
+      int lin = (int)msg.linear.x;
+      int ang = (int)msg.angular.z;
 
       //clamp values
       if(lin > 1000) lin = 1000;
@@ -152,24 +159,35 @@ class ArclDriver
       if(abs(lin) < 20) lin = 0;
       if(abs(ang) < 5) ang = 0;
 
+      //stop if both are 0
+      if(lin == 0 && ang == 0)
+      {
+        std_msgs::Empty sMsg;
+        stopCB(sMsg);
+        prevLin = 0;
+        prevAng = 0;
+
+        return;
+      }
+
       //prioritize turning
-      if(abs(ang) > 0)
+      else if(abs(ang) > 0)
       {
         //do not refresh cmd if new val is similar
-        if(abs(ang - prevAng) <= 5) return;
+        if(abs(ang - prevAng) <= 7) return;
 
         //construct turn msg
-        std_msgs::Int32MultiArray msg;
-        msg.data.clear();
-        if(ang > 0) msg.data.push_back(1440);
-        else msg.data.push_back(-1440);
-        msg.data.push_back(abs(ang));
+        umd_arcl_driver::Command2 msg;
+        if(ang > 0) msg.target = 1440;
+        else msg.target = -1440;
+        msg.speed = abs(ang);
 
         //manually call rotate callback
         rotateCB(msg);
 
         //save previous value
         prevAng = ang;
+        prevLin = 0;
 
         return;
       }
@@ -178,20 +196,20 @@ class ArclDriver
       else if(abs(lin) > 0)
       {
         //do not refresh cmd if new val is similar
-        if(abs(lin - prevLin) <= 20) return;
+        if(abs(lin - prevLin) <= 30) return;
 
         //construct move msg
-        std_msgs::Int32MultiArray msg;
-        msg.data.clear();
-        if(lin > 0) msg.data.push_back(10000);
-        else msg.data.push_back(-10000);
-        msg.data.push_back(abs(lin));
+        umd_arcl_driver::Command2 msg;
+        if(lin > 0) msg.target = 10000;
+        else msg.target = -10000;
+        msg.speed = abs(lin);
 
         //manually call move callback
         moveCB(msg);
 
         //save previous value
         prevLin = lin;
+        prevAng = 0;
 
         return;
       }
@@ -228,6 +246,28 @@ class ArclDriver
 
         //free memory
         free(f);
+        return;
+      }
+
+      //check line for odometer keyword
+      if(strstr(buf, "Odometer") != NULL)
+      {
+        //get odometer values
+        int* i = arclParseOdometer(buf);
+
+        //check for nullptr
+        if(i == NULL)
+        {
+          ROS_WARN_STREAM("Failed to fetch odometer info\n");
+          return;
+        }
+
+        //publish
+        pubOdometer(i);
+
+        //free memory
+        free(i);
+        return;
       }
 
       //check line for lidar keyword
@@ -241,18 +281,15 @@ class ArclDriver
         //get list of points
         arclParseLidar(buf, &pArr);
 
-        //check for null
-        if(pArr.size == 0)
-        {
-          ROS_WARN_STREAM("Failed to fetch current lidar data\n");
-          return;
-        }
+        //check for size 0
+        if(pArr.size == 0) return;
 
         //publish
         pubLidar(&pArr, dev);
 
         //reset pArr size
         pArr.size = 0;
+        return;
       }
     }
 
@@ -277,6 +314,24 @@ class ArclDriver
       poseMsg.pose.theta = f[3];
       poseMsg.header.stamp = ros::Time::now();
       posePub.publish(poseMsg);
+    }
+
+    void pubOdometer(int* o)
+    {
+      //check if o is nullptr
+      if(o == NULL)
+      {
+        ROS_WARN_STREAM("Error publishing odometer\n");
+        return;
+      }
+
+      //publish odometer
+      umd_arcl_driver::Odometer oMsg;
+      oMsg.distance = o[0];
+      oMsg.angle = o[1];
+      oMsg.time = o[2];
+      oMsg.header.stamp = ros::Time::now();
+      odomPub.publish(oMsg);
     }
 
     void pubLidar(const Point2DArr* pArr, int device)
@@ -311,6 +366,12 @@ class ArclDriver
       if(nb < 0) ROS_WARN_STREAM("Status request was unsuccessful\n");
     }
 
+    void requestOdometer()
+    {
+      int nb = socketSend(sfd, "odometer\n");
+      if(nb < 0) ROS_WARN_STREAM("Odometer request was unsuccessful\n");
+    }
+
     void requestLidar()
     {
       std::string cmd = "RangeDeviceGetCurrent " + primaryLidarName + "\n";
@@ -339,17 +400,20 @@ int main(int argc, char** argv)
   ArclDriver Driver(&nh);
 
   //let ros take over
-  ros::Rate rate(100);
+  ros::Rate rate(200);
   int statusCtr = 0;
   int lidarCtr = 0;
+  //struct timeval start, stop;
   while(ros::ok())
   {
+    //gettimeofday(&start, NULL);
+
     //update request counters
     statusCtr++;
     lidarCtr++;
 
     //send lidar request at (lidarRate) hz
-    if(lidarCtr == 100/Driver.getLidarRate())
+    if(lidarCtr == 200/Driver.getLidarRate())
     {
       lidarCtr = 0;
       Driver.requestLidar();
@@ -357,10 +421,11 @@ int main(int argc, char** argv)
     }
 
     //send status request at (statusRate) hz
-    if(statusCtr == 100/Driver.getStatusRate())
+    if(statusCtr == 200/Driver.getStatusRate())
     {
       statusCtr = 0;
       Driver.requestStatus();
+      Driver.requestOdometer();
     }
 
     //read line from server
@@ -368,6 +433,10 @@ int main(int argc, char** argv)
 
     //process callbacks
     ros::spinOnce();
+
+    //gettimeofday(&stop, NULL);
+    //printf("%06ld us\n", stop.tv_usec - start.tv_usec);
+
     rate.sleep();
   }
 

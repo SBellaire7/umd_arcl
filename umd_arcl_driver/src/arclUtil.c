@@ -24,10 +24,12 @@ int arclLogin(const char* ipAddr, int port, const char* pw)
   nb = socketSend(sock, pwnl);
   if(nb < 0) return -3;
 
-  //wait a few ms and check if login succeeded through blocking read
-  usleep(5000);
-  nb = socketReceiveBlocking(sock, buf, 65536, 65535);
-  if(strstr(buf, "Welcome") == NULL) return -4;
+  //check if login succeeded through blocking read
+  nb = socketReceiveBlocking(sock, buf, 65536, 1);
+  if(nb <= 0) return -4;
+
+  //skip command list
+  nb = socketReadUntil(sock, buf, 65536, "End of commands");
 
   return sock;
 }
@@ -40,48 +42,58 @@ int arclQuit(int sock)
   return 0;
 }
 
-float* arclParseStatus(const char* status)
+float* arclParseStatus(char* status)
 {
   //check if status is a nullptr
   if(status == NULL) return NULL;
 
-  //find the location of useful info
-  const char* soc = strstr(status, "Charge");
-  const char* loc = strstr(status, "Location");
-  const char* tmp = strstr(status, "Temperature");
-
-  //check if info was found
-  if(soc == NULL || loc == NULL || tmp == NULL) return NULL;
-
-  //calculate length of substrings to extract
-  int socLen = loc - soc - 8;
-  int locLen = tmp - loc - 10;
-
-  //create buffers for substrings
-  char socBuf[socLen + 1];
-  char locBuf[locLen + 1];
-
-  //extract substrings with numbers
-  memcpy(socBuf, soc + 8, socLen);
-  socBuf[socLen] = '\0';
-  memcpy(locBuf, loc + 10, locLen);
-  locBuf[locLen] = '\0';
+  //make sure info exists
+  char* cptr = strstr(status, "Charge");
+  char* lptr = strstr(status, "Location");
+  if(cptr == NULL || lptr == NULL) return NULL;
 
   float* f = calloc(4, sizeof(float));
 
-  //get state of charge
-  f[0] = atof(socBuf);
-
   //get pose
-  char* tok = strtok(locBuf, " ");
-  f[1] = atof(tok);
-  tok = strtok(NULL, " ");
-  if(tok != NULL) f[2] = atof(tok);
-  tok = strtok(NULL, " ");
-  if(tok != NULL) f[3] = atof(tok);
+  char* tok = strtok(lptr, " ");
+  for(int i = 0; i < 3; i++)
+  {
+    tok = strtok(NULL, " ");
+    if(tok != NULL) f[i+1] = (float)atoi(tok);
+  }
 
-  //return status values
+  //get state of charge
+  tok = strtok(cptr, " ");
+  tok = strtok(NULL, " ");
+  if(tok != NULL) f[0] = atof(tok);
+
+  //return status
   return f;
+}
+
+
+int* arclParseOdometer(char* odometer)
+{
+  //check if odometer is a nullptr
+  if(odometer == NULL) return NULL;
+
+  //make sure info exists
+  const char* optr = strstr(odometer, "Odometer");
+  if(optr == NULL) return NULL;
+
+  int* o = calloc(3, sizeof(int));
+
+  //get values
+  char* tok = strtok(odometer, " ");
+  for(int i = 0; i < 3; i++)
+  {
+    tok = strtok(NULL, " ");
+    if(tok != NULL) o[i] = atoi(tok);
+    tok = strtok(NULL, " "); 
+  }
+
+  //return odometer
+  return o;
 }
 
 void arclParseLidar(char* lidar, Point2DArr* pArr)

@@ -8,8 +8,8 @@ project(umd_arcl_driver)
 find_package(catkin REQUIRED COMPONENTS roscpp std_msgs geometry_msgs sensor_msgs message_generation)
 
 #add msg files
-add_message_files(FILES Pose2DStamped.msg)
-generate_messages(DEPENDENCIES std_msgs geometry_msgs)
+add_message_files(FILES Pose2DStamped.msg Odometer.msg Command2.msg)
+generate_messages(DEPENDENCIES std_msgs geometry_msgs sensor_msgs)
 
 #declare package
 catkin_package(CATKIN_DEPENDS message_runtime)

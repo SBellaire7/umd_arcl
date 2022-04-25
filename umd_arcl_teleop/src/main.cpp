@@ -1,11 +1,10 @@
 #include <ros/ros.h>
 #include <string>
-#include <sensor_msgs/Joy.h>
-#include <std_msgs/Int32.h>
-#include <std_msgs/Int32MultiArray.h>
-#include <std_msgs/Bool.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#include <sensor_msgs/Joy.h>
+#include <geometry_msgs/Twist.h>
 
 class ArclTeleop
 {
@@ -13,102 +12,35 @@ class ArclTeleop
 
     //handles
     ros::Subscriber joySub;
-    ros::Publisher movePub;
-    ros::Publisher rotatePub;
-    ros::Publisher gsPub;
-
-    bool dmSw;
-    int moveSpd;
-    int turnSpd;
-    int prevMoveSpd;
-    int prevTurnSpd;
+    ros::Publisher twistPub;
 
   public:
 
     ArclTeleop(ros::NodeHandle* nh)
     {
+      //setup subscribers and publishers
       joySub = nh->subscribe("/joy", 1, &ArclTeleop::joySubCB, this);
-      movePub = nh->advertise<std_msgs::Int32MultiArray>
-        ("arcl/move", 1);
-      rotatePub = nh->advertise<std_msgs::Int32MultiArray>
-        ("arcl/rotate", 1);
-      gsPub = nh->advertise<std_msgs::Bool>("arcl/goStop", 1);
-
-      dmSw = false;
-      moveSpd = 0;
-      turnSpd = 0;
-      prevMoveSpd = 0;
-      prevTurnSpd = 0;
+      twistPub = nh->advertise<geometry_msgs::Twist>("arcl/cmd_vel", 1);
     }
 
     void joySubCB(const sensor_msgs::Joy& msg)
     {
-      //get left joy (fwd vel) and right joy (turning)
-      float axMove = msg.axes[1];
-      float axTurn = msg.axes[3];
+      //get deadman switches
+      bool dmSw = msg.buttons[4] | msg.buttons[5];
 
-      //get deadman switch (either LB or RB)
-      dmSw = msg.buttons[4] | msg.buttons[5];
+      //setup message (with 0s if dm sw isnt pressed)
+      geometry_msgs::Twist twistMsg;
+      if(dmSw) twistMsg.linear.x = msg.axes[1] * 1000;
+      else twistMsg.linear.x = 0;
+      twistMsg.linear.y = 0;
+      twistMsg.linear.z = 0;
+      twistMsg.angular.x = 0;
+      twistMsg.angular.y = 0;
+      if(dmSw) twistMsg.angular.z = msg.axes[3] * 100;
+      else twistMsg.angular.z = 0;
 
-      //calculate velocities (max 1m/s or 100deg/s)
-      moveSpd = axMove * 1000;
-      turnSpd = axTurn * 100;
-
-      //clamp values
-      if(moveSpd > 1000) moveSpd = 1000;
-      if(moveSpd < -1000) moveSpd = -1000;
-      if(turnSpd > 100) turnSpd = 100;
-      if(turnSpd < -100) turnSpd = -100;
-      if(abs(moveSpd) < 20) moveSpd = 0;
-      if(abs(turnSpd) < 5) turnSpd = 0;
-
-      //pub right away if dms is released
-      if(!dmSw)
-      {
-        arclPub();
-      }
-    }
-
-    void arclPub()
-    {
-      //create msg and clear out data
-      std_msgs::Bool gsMsg;
-      std_msgs::Int32MultiArray msg;
-      msg.data.clear();
-
-      //if turn and move are close to 0 or dmSw not pressed,
-      //stop the robot from turning
-      if(((abs(turnSpd) == 0) && (abs(moveSpd) == 0)) || !dmSw)
-      {
-        prevMoveSpd = 0;
-        prevMoveSpd = 0;
-        gsMsg.data = 0;
-        gsPub.publish(gsMsg);
-      }
-
-      //otherwise prioritize turning
-      else if((abs(turnSpd) > 0) && (abs(turnSpd - prevTurnSpd) > 5))
-      {
-        prevTurnSpd = turnSpd;
-        gsMsg.data = 1;
-        gsPub.publish(gsMsg);
-        if(turnSpd > 0) msg.data.push_back(1440);
-        else msg.data.push_back(-1440);
-        msg.data.push_back(abs(turnSpd));
-        rotatePub.publish(msg);
-      }
-
-      //otherwise move
-      else if(abs(prevMoveSpd - moveSpd) > 20)
-      {
-        prevMoveSpd = moveSpd;
-        gsMsg.data = 1;
-        gsPub.publish(gsMsg);
-        if(moveSpd > 0) msg.data.push_back(10000);
-        else msg.data.push_back(-10000);
-        msg.data.push_back(abs(moveSpd));
-        movePub.publish(msg);
-      }
+      //send msg
+      twistPub.publish(twistMsg);
     }
 };
 
@@ -124,7 +56,7 @@ int main(int argc, char** argv)
   while(ros::ok())
   {
     ros::spinOnce();
-    Teleop.arclPub();
     rate.sleep();
   }
 }
+

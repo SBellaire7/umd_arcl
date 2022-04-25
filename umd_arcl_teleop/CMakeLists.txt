@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 2.8.3)
 project(umd_arcl_teleop)
 
 #find required packages
-find_package(catkin REQUIRED COMPONENTS roscpp std_msgs sensor_msgs joy umd_arcl_driver)
+find_package(catkin REQUIRED COMPONENTS roscpp std_msgs sensor_msgs geometry_msgs joy umd_arcl_driver)
 
 #declare package
 catkin_package()

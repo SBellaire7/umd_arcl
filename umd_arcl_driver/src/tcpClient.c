@@ -93,12 +93,12 @@ int socketReceiveLine(int sock, char* buf, int buflen)
   //peek at data to make sure there is a full line
   int nb = socketPeek(sock, buf, buflen);
   if(nb < 0) return -1;
-  char* c = strchr(buf, '\n');
-  if(c = NULL) return 0;
+  char* n = strchr(buf, '\n');
+  if(n == NULL) return 0;
 
   //if there is a full line, read up to (and including) the \n
-  int idx = (int)(c - buf);
-  nb = socketReceive(sock, buf, buflen, idx+1);
+  int len = (int)(n - buf);
+  nb = socketReceive(sock, buf, buflen, len+1);
   if(nb < 0) return -1;
   return nb;
 }

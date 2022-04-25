@@ -8,6 +8,7 @@
   <param name="arcl/ip" value="192.168.1.61" type="string"/>
   <param name="arcl/port" value="7171" type="int"/>
   <param name="arcl/pw" value="omron" type="string"/>
+  <param name="arcl/lidarRate" value="5" type="int"/>
 
   <node name="teleop_node" pkg="umd_arcl_teleop" type="arclTeleop"/>
 </launch>
